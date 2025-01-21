@@ -1,216 +1,163 @@
-var url = 'http://localhost:8080/subscribe';
+const VapidPublicKey = "BCWPohXk_M13Y8Mj8TenEgzINHJNxj1IxTZ0F-GqBSCQWPAyeI7-Dw5c1sZKKYH8j1OcIM9fP24w7g-cwWBBKM8";
+isSubscribed = false;
 
-var applicationServerPublicKey = 'BGourvoVyVYEFyhTNy5qWv9HmdqJi-mG1PhRSSJe2qO8Dm3YOGWxz5tHDGjwwfMfz8VrcN627R-i5ZDY3jEC2MU';
-
-var serviceWorkerName = 'sw.js';
-
-var isSubscribed = false;
-var swRegistration = null;
-
-$(document).ready(function () {
-    $('#btnPushNotifications').click(function (event) {
-        if(isSubscribed){
-            console.log("Unsubscribing...");
-            unsubscribe();
-        }else{
-            subscribe();
-        }
-    });
-    
-    Notification.requestPermission().then(function (status) {
-        if (status === 'denied') {
-            console.log('[Notification.requestPermission] The user has blocked notifications.');
-            disableAndSetBtnMessage('Notification permission denied');
-        } else if (status === 'granted') {
-            console.log('[Notification.requestPermission] Initializing service worker.');
-            initialiseServiceWorker();
-        }
-    });
+$(document).ready(function() {
+    // 註冊 Service Worker
+    registerServiceWorker();
+    // 詢問用戶是否允許接收通知
+    if (Notification.permission !== 'granted') {
+        askPermission();
+    }
 });
 
-function initialiseServiceWorker() {
-    if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register(serviceWorkerName).then(handleSWRegistration);
-    } else {
-        console.log('Service workers aren\'t supported in this browser.');
-        disableAndSetBtnMessage('Service workers unsupported');
-    }
-};
-
-function handleSWRegistration(reg) {
-    if (reg.installing) {
-        console.log('Service worker installing');
-    } else if (reg.waiting) {
-        console.log('Service worker installed');
-    } else if (reg.active) {
-        console.log('Service worker active');
-    }
-    
-    swRegistration = reg;
-    initialiseState(reg);
-}
-
-// Once the service worker is registered set the initial state
-function initialiseState(reg) {
-    // Are Notifications supported in the service worker?
-    if (!(reg.showNotification)) {
-        console.log('Notifications aren\'t supported on service workers.');
-        disableAndSetBtnMessage('Notifications unsupported');
-        return;
-    }
-
-    // Check if push messaging is supported
-    if (!('PushManager' in window)) {
-        console.log('Push messaging isn\'t supported.');
-        disableAndSetBtnMessage('Push messaging unsupported');
-        return;
-    }
-
-    // We need the service worker registration to check for a subscription
-    navigator.serviceWorker.ready.then(function (reg) {
-        // Do we already have a push message subscription?
-        reg.pushManager.getSubscription()
-            .then(function (subscription) {
-                if (!subscription) {
-                    console.log('Not yet subscribed to Push');
-
-                    isSubscribed = false;
-                    makeButtonSubscribable();
-                } else {
-                    // initialize status, which includes setting UI elements for subscribed status
-                    // and updating Subscribers list via push
-                    isSubscribed = true;
-                    makeButtonUnsubscribable();
-                }
-            })
-            .catch(function (err) {
-                console.log('Error during getSubscription()', err);
-            });
-    });
+function toggleSubscription() {
+  if (isSubscribed) {
+    unsubscribe();
+  } else {
+    subscribe();
+  }
 }
 
 function subscribe() {
-    navigator.serviceWorker.ready.then(function (reg) {
-        var subscribeParams = {userVisibleOnly: true};
-        
-        //Setting the public key of our VAPID key pair.
-        var applicationServerKey = urlB64ToUint8Array(applicationServerPublicKey);
-        subscribeParams.applicationServerKey = applicationServerKey;
+    console.log('Subscribing user to push...');
 
-        reg.pushManager.subscribe(subscribeParams)
-            .then(function (subscription) {
+    $('#btnPushNotifications').addClass('btn-danger').removeClass('btn-primary');
 
-                // Update status to subscribe current user on server, and to let
-                // other users know this user has subscribed
-                var endpoint = subscription.endpoint;
-                var key = subscription.getKey('p256dh');
-                var auth = subscription.getKey('auth');
-                sendSubscriptionToServer(endpoint, key, auth);
-                isSubscribed = true;
-                makeButtonUnsubscribable();
-            })
-            .catch(function (e) {
-                // A problem occurred with the subscription.
-                console.log('Unable to subscribe to push.', e);
-            });
-    });
+    return navigator.serviceWorker
+      .register('./sw.js')
+      .then(function (registration) {
+        console.log('Service Worker registered with scope:', registration.scope);
+            
+        // 確保用戶允許接收通知
+        if (Notification.permission !== 'granted') {
+          throw new Error('Permission not granted for Notification');
+        }
+  
+        return registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlB64ToUint8Array(VapidPublicKey),
+        });
+      }).then(function (pushSubscription) {
+        console.log(
+          'Received PushSubscription: ',
+          JSON.stringify(pushSubscription),
+        );
+        sendSubscriptionToBackEnd(pushSubscription);
+      });
 }
 
 function unsubscribe() {
-    var endpoint = null;
-    swRegistration.pushManager.getSubscription()
-        .then(function(subscription) {
-            if (subscription) {
-                endpoint = subscription.endpoint;
-                return subscription.unsubscribe();
-            }
-        })
-        .catch(function(error) {
-            console.log('Error unsubscribing', error);
-        })
-        .then(function() {
-            removeSubscriptionFromServer(endpoint);
-
-            console.log('User is unsubscribed.');
-            isSubscribed = false;
-
-            makeButtonSubscribable(endpoint);
-        });
+  navigator.serviceWorker.ready.then(function (registration) {
+    registration.pushManager.getSubscription().then(function (subscription) {
+      sendUnsubscriptionToBackEnd(subscription);
+      subscription.unsubscribe().then(function () {
+        console.log('Unsubscribed.');
+      }).catch(function (e) {
+        console.error('Unsubscription error: ', e);
+      })
+    }).catch(function (e) {
+      console.error('Error thrown while unsubscribing.', e);
+    });
+  });
 }
 
-function sendSubscriptionToServer(endpoint, key, auth) {
-    var encodedKey = btoa(String.fromCharCode.apply(null, new Uint8Array(key)));
-    var encodedAuth = btoa(String.fromCharCode.apply(null, new Uint8Array(auth)));
-    
-    console.log("Sending subscription to server with the following details:");
-    console.log("Endpoint:", endpoint);
-    console.log("Key:", key);
-    console.log("Auth:", auth);
-    console.log("Encoded key:", encodedKey);
-    console.log("Encoded auth:", encodedAuth);
-    console.log("type: POST");
-    console.log("url: http://localhost:8080/subscribe");
-
-    $.ajax({
-        type: 'POST',
-        url: 'http://localhost:8080/subscribe',
-        data: {publicKey: encodedKey, auth: encodedAuth, notificationEndPoint: endpoint},
-        success: function (response) {
-            console.log('Subscribed successfully! ' + JSON.stringify(response));
-        },
-        dataType: 'json'
+function sendSubscriptionToBackEnd(subscription) {
+    console.log('Sending subscription to back-end.');
+    return fetch('http://localhost:8080/api/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        endpoint: subscription.endpoint,
+        keys: {
+          p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('p256dh')))),
+          auth: btoa(this.String.fromCharCode.apply(null, new Uint8Array(subscription.getKey("auth"))))
+        }
+      }),
+    })
+      .then(function (response) {
+        if (!response.ok) {
+          throw new Error('Bad status code from server.');
+        }
+        isSubscribed = true;
+        return response.json();
+      })
+      .then(function (responseData) {
+        if (!(responseData.data && responseData.data.success)) {
+          throw new Error('Bad response from server.');
+        }
     });
 }
 
-function removeSubscriptionFromServer(endpoint) {
-    console.log("Removing subscription from server with the following endpoint:", endpoint);
-    console.log("type: POST");
-    console.log("url: http://localhost:8080/unsubscribe");
-    $.ajax({
-        type: 'POST',
-        url: 'http://localhost:8080/unsubscribe',
-        data: {notificationEndPoint: endpoint},
-        success: function (response) {
-            console.log('Unsubscribed successfully! ' + JSON.stringify(response));
-        },
-        dataType: 'json'
+function sendUnsubscriptionToBackEnd(subscription) {
+  console.log('Sending unsubscription to back-end.');
+  return fetch('http://localhost:8080/api/unsubscribe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      endpoint: subscription.endpoint,
+      keys: {
+        p256dh: btoa(String.fromCharCode.apply(null, new Uint8Array(subscription.getKey('p256dh')))),
+        auth: btoa(this.String.fromCharCode.apply(null, new Uint8Array(subscription.getKey("auth"))))
+      }
+    }),
+  })
+    .then(function (response) {
+      if (!response.ok) {
+        throw new Error('Bad status code from server.');
+      }
+      isSubscribed = false;
+      return response.json();
+    })
+    .then(function (responseData) {
+      if (!(responseData.data && responseData.data.success)) {
+        throw new Error('Bad response from server.');
+      }
+  });
+}
+
+function registerServiceWorker() {
+    return navigator.serviceWorker
+      .register('./sw.js')
+      .then(function (registration) {
+        console.log('Service worker successfully registered.');
+        return registration;
+      })
+      .catch(function (err) {
+        console.error('Unable to register service worker.', err);
+      });
+}
+
+function askPermission() {
+    return new Promise(function (resolve, reject) {
+      const permissionResult = Notification.requestPermission(function (result) {
+        resolve(result);
+      });
+  
+      if (permissionResult) {
+        permissionResult.then(resolve, reject);
+      }
+    }).then(function (permissionResult) {
+      if (permissionResult !== 'granted') {
+        throw new Error("We weren't granted permission.");
+      }
     });
 }
 
-function disableAndSetBtnMessage(message) {
-    setBtnMessage(message);
-    $('#btnPushNotifications').attr('disabled','disabled');
-}
 
-function enableAndSetBtnMessage(message) {
-    setBtnMessage(message);
-    $('#btnPushNotifications').removeAttr('disabled');
-}
 
-function makeButtonSubscribable() {
-    enableAndSetBtnMessage('Subscribe to push notifications');
-    $('#btnPushNotifications').addClass('btn-primary').removeClass('btn-danger');
-}
-
-function makeButtonUnsubscribable() {
-    enableAndSetBtnMessage('Unsubscribe from push notifications');
-    $('#btnPushNotifications').addClass('btn-danger').removeClass('btn-primary');
-}
-
-function setBtnMessage(message) {
-    $('#btnPushNotifications').text(message);
-}
-
-function urlB64ToUint8Array(base64String) {
-    const padding = '='.repeat((4 - base64String.length % 4) % 4);
-    const base64 = (base64String + padding)
-        .replace(/\-/g, '+')
+// 將 Base64 URL 轉換為 Uint8Array (VAPID 公開密鑰的必要處理)
+function urlB64ToUint8Array(base64) {
+    const padding = '='.repeat((4 - base64.length % 4) % 4);
+    const base64Encoded = (base64 + padding)
+        .replace(/-/g, '+')
         .replace(/_/g, '/');
-
-    const rawData = window.atob(base64);
+    const rawData = window.atob(base64Encoded);
     const outputArray = new Uint8Array(rawData.length);
-
-    for (var i = 0; i < rawData.length; ++i) {
+    for (let i = 0; i < rawData.length; i++) {
         outputArray[i] = rawData.charCodeAt(i);
     }
     return outputArray;

@@ -6,6 +6,7 @@
     <link rel="stylesheet" href="css/bootstrap-theme.min.css"/>
     <link rel="stylesheet" href="css/bootstrap.min.css"/>
     <script src="js/jquery-3.1.0.min.js"></script>
+    <script src="js/main.js"></script>
 </head>
 <body>
 <div class="container-fluid">
@@ -16,12 +17,16 @@
     </div>
     <div class="row">
         <div class="col-lg-12">
-            <button class="btn btn-primary" id="btnPushNotifications" name="btnPushNotifications">
+            <button class="btn btn-primary" id="btnPushNotifications" name="btnPushNotifications"
+                    onclick="toggleSubscription()">
                 Enable Push Messaging
+            </button>
+            <button class="btn btn-primary" id="btnTriggerPushNotification" name="btnTriggerPushNotification"
+                    onclick="triggerPushNotification()">
+                Trigger Push Notification
             </button>
         </div>
     </div>
 </div>
-<script src="js/main.js"></script>
 </body>
 </html>
