@@ -2,9 +2,9 @@ const VapidPublicKey = "BCWPohXk_M13Y8Mj8TenEgzINHJNxj1IxTZ0F-GqBSCQWPAyeI7-Dw5c
 isSubscribed = false;
 
 $(document).ready(function() {
-    // 註冊 Service Worker
+    // register Service Worker
     registerServiceWorker();
-    // 詢問用戶是否允許接收通知
+    // ask for permission
     if (Notification.permission !== 'granted') {
         askPermission();
     }
@@ -21,14 +21,12 @@ function toggleSubscription() {
 function subscribe() {
     console.log('Subscribing user to push...');
 
-    $('#btnPushNotifications').addClass('btn-danger').removeClass('btn-primary');
-
     return navigator.serviceWorker
       .register('./sw.js')
       .then(function (registration) {
         console.log('Service Worker registered with scope:', registration.scope);
             
-        // 確保用戶允許接收通知
+        // confirm permission
         if (Notification.permission !== 'granted') {
           throw new Error('Permission not granted for Notification');
         }
@@ -63,7 +61,7 @@ function unsubscribe() {
 
 function sendSubscriptionToBackEnd(subscription) {
     console.log('Sending subscription to back-end.');
-    return fetch('http://localhost:8080/api/subscribe', {
+    return fetch('http://localhost:8080/api/subscription/subscribe', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -81,6 +79,7 @@ function sendSubscriptionToBackEnd(subscription) {
           throw new Error('Bad status code from server.');
         }
         isSubscribed = true;
+        $('#btnPushNotifications').addClass('btn-danger').removeClass('btn-primary');
         return response.json();
       })
       .then(function (responseData) {
@@ -92,7 +91,7 @@ function sendSubscriptionToBackEnd(subscription) {
 
 function sendUnsubscriptionToBackEnd(subscription) {
   console.log('Sending unsubscription to back-end.');
-  return fetch('http://localhost:8080/api/unsubscribe', {
+  return fetch('http://localhost:8080/api/subscription/unsubscribe', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -110,6 +109,7 @@ function sendUnsubscriptionToBackEnd(subscription) {
         throw new Error('Bad status code from server.');
       }
       isSubscribed = false;
+      $('#btnPushNotifications').addClass('btn-primary').removeClass('btn-danger');
       return response.json();
     })
     .then(function (responseData) {
@@ -132,15 +132,7 @@ function registerServiceWorker() {
 }
 
 function askPermission() {
-    return new Promise(function (resolve, reject) {
-      const permissionResult = Notification.requestPermission(function (result) {
-        resolve(result);
-      });
-  
-      if (permissionResult) {
-        permissionResult.then(resolve, reject);
-      }
-    }).then(function (permissionResult) {
+    Notification.requestPermission().then(function (permissionResult) {
       if (permissionResult !== 'granted') {
         throw new Error("We weren't granted permission.");
       }
@@ -149,7 +141,7 @@ function askPermission() {
 
 
 
-// 將 Base64 URL 轉換為 Uint8Array (VAPID 公開密鑰的必要處理)
+// base64 url convert to Uint8Array
 function urlB64ToUint8Array(base64) {
     const padding = '='.repeat((4 - base64.length % 4) % 4);
     const base64Encoded = (base64 + padding)
